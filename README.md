@@ -167,8 +167,7 @@ public class NetThread extends Thread {
     private URL url;
     private boolean flag = true;    //控制线程的标志位
 
-    public NetThread() {
-    }
+    public NetThread() {}
 
     public void stopThreadByFlag() {
         flag = false;
