@@ -12,20 +12,20 @@ EvnetBus的github地址：https://github.com/greenrobot/EventBus
 ### (1)通过配置Gradle文件下载EventBus类库 
 ```java 
 dependencies {
-    compile 'de.greenrobot:eventbus:2.4.0'
+    compile 'org.greenrobot:eventbus:3.1.1'
 }
 ```
 
-当然也可以通过添加jar包的方式使用EventBus，[EventBus jar包下载地址](https://github.com/SummerRC/EventBusDemo/blob/master/libs/eventbus.jar)
+当然也可以通过添加jar包的方式使用EventBus，[EventBus jar包下载地址(非最新版)](https://github.com/SummerRC/EventBusDemo/blob/master/libs/eventbus.jar)
 
 ### (2)自定义一个事件类，比如：
 ```java 
 public class ThreadEvent {
-    public Object object;           //用于Event中传递信息
+    public Object data;           //用于Event中传递信息
     public Event event;             //用于区别Event的类型:获取到内容和取消线程两个类型
     
     public enum Event {
-        EVENT_GET_CONTENT, EVENT_CANCLE_THREAD
+        EVENT_GET_CONTENT, EVENT_CANCEL_THREAD
     }
 }
 ```
@@ -45,9 +45,10 @@ EventBus.getDefault().post(new ThreadEvent());
  * 接收ThreadEvent事件
  * @param threadEvent 事件类型
  */
+@Subscribe(threadMode = ThreadMode.MAIN)
 public void onEventMainThread(ThreadEvent threadEvent) {
     switch (threadEvent.event) {        //消息类型
-        case EVENT_CANCLE_THREAD:
+        case EVENT_CANCEL_THREAD:
             break;
         case EVENT_GET_CONTENT:
             StringBuffer text = new StringBuffer(tv_content.getText().toString());
@@ -62,12 +63,31 @@ public void onEventMainThread(ThreadEvent threadEvent) {
 EventBus.getDefault().unregister(this);
 ```
 
-### (7)EventBus的4个接收事件的回调函数：  
+### (7)EventBus接收事件的回调函数的4个调用模式：  
 
-- **onEvent**：   它和ThreadModel中的PostThread对应，这个也是默认的类型，当使用这种类型时，回调函数和发起事件的函数会在同一个线程中执行   
-- **onEventMainThread**：当使用这种类型时，回调函数会在主线程中执行，这个在Android中非常有用，因为在Android中禁止在子线程中修改UI   
-- **onEventBackgroundThread**：当使用这种类型时，如果事件发起函数在主线程中执行，那么回调函数另启动一个子线程，如果事件发起函数在子线程执行，那么回调函数就在这个子线程执行。   
-- **onEventBusAsync**：当使用这种类型时，不管事件发起函数在哪里执行，都会另起一个线程去执行回调。
+- **ThreadMode.POSTING（~~onEvent~~）**：默认类型，回调函数在发起事件的线程中执行   
+- **ThreadMode.MAIN（~~onEventMainThread~~）**：回调函数在UI线程中执行  
+- **ThreadMode.BACKGROUND（~~onEventBackgroundThread~~）**：如果事件发起函数在UI线程中执行，那么回调函数另启动一个子线程; 如果事件发起函数在子线程执行，那么回调函数就在这个子线程执行
+- **ThreadMode.ASYNC（~~onEventBusAsync~~）**：回调在新开辟的线程中执行(不管发起函数在哪个线程), 主要用于耗时操作
+
+### (8)EventBus的简单配置
+
+```java 
+public class MyApplication extends Application {
+
+    @Override
+    public void onCreate() {
+        super.onCreate();
+
+        initEventBusConfig();
+    }
+
+    private void initEventBusConfig() {
+        //DEBUG模式下抛出异常、发布不抛出
+        EventBus.builder().throwSubscriberException(BuildConfig.DEBUG).installDefaultEventBus();
+    }
+}
+```
 
 ## 三、例子的详细代码
 用EventBus写了一个简单的小例子：MainActivity启动之后开启一个线程去访问http://baidu.com, 线程将访问到的网页内容以流的形式读出之后，每读取一个字符就将该字符封装到Event里面通过EventBus发送给MainActivity,MainActivity每得到一个字符就将其显示到TextView上面，从而达到一个逐字书写的效果。代码如下：
@@ -75,7 +95,7 @@ EventBus.getDefault().unregister(this);
 ### (1)主界面MainActivity类:
 
 ```java 
-public class MainActivity extends Activity {
+public class MainActivity extends AppCompatActivity {
 
     private TextView tv_content;
     private NetThread netThread;
@@ -83,56 +103,71 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        this.requestWindowFeature(Window.FEATURE_NO_TITLE);     //去掉标题栏
         setContentView(R.layout.activity_main);
         tv_content = (TextView) findViewById(R.id.tv_content);
 
-        /** register EventBus*/
+        Toolbar toolbar = (Toolbar) findViewById(R.id.toolbar);
+        setSupportActionBar(toolbar);
+        initFab();
+    }
+
+    private void initFab() {
+        FloatingActionButton fab = (FloatingActionButton) findViewById(R.id.fab);
+        fab.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                Snackbar.make(view, "不许点我", Snackbar.LENGTH_LONG)
+                        .setAction("Action", null).show();
+            }
+        });
+    }
+
+    @Override
+    public void onStart() {
+        super.onStart();
+        // register EventBus
         EventBus.getDefault().register(this);
         netThread = new NetThread();
         netThread.start();
     }
 
-
     @Override
-    public void onDestroy() {
-        super.onDestroy();
-        /** Unregister EventBus*/
+    public void onStop() {
+        // Unregister EventBus
         EventBus.getDefault().unregister(this);
         netThread.stopThreadByFlag();
+        super.onStop();
     }
-
 
     /**
      * 接收ThreadEvent事件
      * @param threadEvent 事件类型
      */
-    public void onEventMainThread(ThreadEvent threadEvent) {
+    @Subscribe(threadMode = ThreadMode.MAIN)
+    public void onThreadEvent(ThreadEvent threadEvent) {
         switch (threadEvent.event) {        //消息类型
-            case EVENT_CANCLE_THREAD:
+            case EVENT_CANCEL_THREAD:
                 break;
             case EVENT_GET_CONTENT:
                 StringBuffer text = new StringBuffer(tv_content.getText().toString());
-                String content = (String) threadEvent.object;
+                String content = (String) threadEvent.data;
                 text.append(content);
                 tv_content.setText(text);
         }
-
     }
-
 }
+
 ```
 
 ### (2)访问网络的自定义线程NetThread类：
 
 ```java
 public class NetThread extends Thread {
-    private DefaultHttpClient client;
-    private String url;
+    private HttpURLConnection mUrlConnection;
+    private URL url;
     private boolean flag = true;    //控制线程的标志位
 
     public NetThread() {
-        url = "http://www.baidu.com/";
     }
 
     public void stopThreadByFlag() {
@@ -140,39 +175,35 @@ public class NetThread extends Thread {
     }
 
     public void run() {
-        client = new DefaultHttpClient();
-        client.getParams().setParameter(CoreConnectionPNames.CONNECTION_TIMEOUT, 2000);     //请求超时时间为2秒
-        client.getParams().setParameter(CoreConnectionPNames.SO_TIMEOUT, 30000);            //读取超时时间为3秒
-
         try {
-            HttpGet get = new HttpGet(url);
-            get.getParams().setParameter(CoreProtocolPNames.HTTP_CONTENT_CHARSET, "UTF-8");
-            HttpResponse response = client.execute(get);
+            url = new URL("http://xiayu.me");
+            mUrlConnection = (HttpURLConnection) url.openConnection();
+            mUrlConnection.setConnectTimeout(20000);     //请求超时时间为2秒
+            mUrlConnection.setReadTimeout(30000);        //读取超时时间为3秒
+
+            InputStream in = new BufferedInputStream(mUrlConnection.getInputStream());
+            BufferedReader bin = new BufferedReader(new InputStreamReader(in));
+
             ThreadEvent threadEvent = new ThreadEvent();
-
-
-            if (response.getStatusLine().getStatusCode() == 200) {
-                BufferedReader bin = new BufferedReader(new InputStreamReader(response.getEntity().getContent()));
-                char content;
-
-                /** 一次读取一个字符，每读取一个字符就发送一个事件 */
-                while ((bin.read()!=-1) && flag) {
-                    content = (char) bin.read();
-                    threadEvent.object = String.valueOf(content);
-                    threadEvent.event = ThreadEvent.Event.EVENT_GET_CONTENT;
-                    /** EventBus发送ThreadEvent事件， 由注册了该ThreadEvent事件的对象接收 */
-                    EventBus.getDefault().post(threadEvent);
-                    /** 线程休眠0.05秒钟 */
-                    Thread.sleep(50);
-                }
-
+            int content = bin.read();
+            // 一次读取一个字符，每读取一个字符就发送一个事件
+            while ((content != -1) && flag) {
+                threadEvent.data = String.valueOf((char) content);
+                threadEvent.event = ThreadEvent.Event.EVENT_GET_CONTENT;
+                // EventBus发送ThreadEvent事件， 由注册了该ThreadEvent事件的对象接收
+                EventBus.getDefault().post(threadEvent);
+                // 线程休眠0.05秒钟
+                Thread.sleep(50);
+                content = bin.read();
             }
-
         } catch (Exception e) {
             e.printStackTrace();
+        } finally {
+            if (mUrlConnection != null) {
+                mUrlConnection.disconnect();
+            }
         }
     }
-
 }
 ```
 ### (3)自定义事件ThreadEvent类：
@@ -184,11 +215,11 @@ public class NetThread extends Thread {
  *          description : <在此填写描述信息>
  */
 public class ThreadEvent {
-    public Object object;           //用于Event中传递信息
+    public Object data;           //用于Event中传递信息
     public Event event;             //用于区别Event的类型:获取到内容和取消线程两个类型
 
     public enum Event {
-        EVENT_GET_CONTENT, EVENT_CANCLE_THREAD
+        EVENT_GET_CONTENT, EVENT_CANCEL_THREAD
     }
 }
 ```
@@ -196,6 +227,6 @@ public class ThreadEvent {
 ## 四、两个Demo
 EventBus使用挺简单的，自己写了一个Deme,修改了一个网上别人写的Demo,Demo地址：
 
-- [EventBusForThread](http://github.com/SummerRC/EventBusForThread)  
-- [EventBusDemo](http://github.com/SummerRC/EventBusDemo)
+- [EventBusDemo One](https://github.com/AndroidPracticeDemo/EventBusDemo)  
+- [EventBusDemo Two](http://github.com/SummerRC/EventBusDemo)
 - [吐槽点啥呢]()
